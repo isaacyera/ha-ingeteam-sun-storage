@@ -260,3 +260,43 @@ def test_every_sensor_decodes_an_empty_image(description):
     description.value_fn([0] * registers.FULL_SIZE)
     if description.attrs_fn is not None:
         description.attrs_fn([0] * registers.FULL_SIZE)
+
+
+def _requests(groups, *, only_default=True):
+    sensors, _ = _selected(groups)
+    spans = [
+        s
+        for d in sensors
+        if d.entity_registry_enabled_default or not only_default
+        for s in d.spans
+    ]
+    return len(registers.plan_chunks(spans))
+
+
+def test_a_refresh_takes_about_a_second_per_request():
+    assert registers.minimum_period(_requests(CORE)) == 6
+    assert registers.minimum_period(_requests(WITH_METER)) == 6
+    assert registers.minimum_period(_requests(WITH_BATTERY)) == 7
+    assert registers.minimum_period(_requests(ALL)) == 7
+    assert registers.minimum_period(_requests(ALL, only_default=False)) == 8
+
+
+def test_scan_interval_limits_make_sense():
+    whole_map = registers.minimum_period(
+        len(registers.plan_chunks([range(a, a + 1) for a in range(registers.FULL_SIZE)]))
+    )
+    # The default is slow enough for every combination, even the whole map.
+    assert const.DEFAULT_SCAN_INTERVAL >= whole_map
+    assert const.MIN_SCAN_INTERVAL <= const.DEFAULT_SCAN_INTERVAL <= const.MAX_SCAN_INTERVAL
+    # Energy is not integrated across a silence of MAX_INTEGRATION_GAP, so a
+    # refresh at the slowest setting must stay well inside it.
+    assert const.MAX_SCAN_INTERVAL * 2 <= const.MAX_INTEGRATION_GAP
+
+
+def test_typical_refresh_text_matches_the_smallest_and_largest_setups():
+    smallest = registers.minimum_scan_interval(_requests(CORE), 1)
+    whole_map = len(
+        registers.plan_chunks([range(a, a + 1) for a in range(registers.FULL_SIZE)])
+    )
+    largest = registers.minimum_scan_interval(whole_map, 1)
+    assert const.TYPICAL_REFRESH == f"{smallest} to {largest}"

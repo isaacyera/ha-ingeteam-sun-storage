@@ -2,6 +2,8 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
+import time
 
 from modbus_connection import ModbusError, ModbusUnit
 
@@ -10,8 +12,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .catalog import IngeteamEnergyDescription, IngeteamSensorDescription
-from .const import DOMAIN, LOGGER, SCAN_INTERVAL
-from .registers import FULL_SIZE, Chunk
+from .const import DOMAIN, LOGGER
+from .registers import FULL_SIZE, Chunk, pause_after
 
 type IngeteamConfigEntry = ConfigEntry[IngeteamRuntimeData]
 
@@ -31,6 +33,7 @@ class IngeteamCoordinator(DataUpdateCoordinator[list[int]]):
         entry: IngeteamConfigEntry,
         unit: ModbusUnit,
         chunks: Sequence[Chunk],
+        scan_interval: int,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -38,13 +41,23 @@ class IngeteamCoordinator(DataUpdateCoordinator[list[int]]):
             LOGGER,
             config_entry=entry,
             name=entry.title,
-            update_interval=SCAN_INTERVAL,
+            update_interval=timedelta(seconds=scan_interval),
         )
         self._unit = unit
         self._chunks = chunks
+        self._period = scan_interval
 
     async def _async_update_data(self) -> list[int]:
-        """Fetch the registers."""
+        """Fetch the registers, then time the pause so the period holds."""
+        started = time.monotonic()
+        data = await self._async_read()
+        self.update_interval = timedelta(
+            seconds=pause_after(self._period, time.monotonic() - started)
+        )
+        return data
+
+    async def _async_read(self) -> list[int]:
+        """Read every request, one after the other."""
         data = [0] * FULL_SIZE
         for start, count in self._chunks:
             try:
@@ -76,3 +89,4 @@ class IngeteamRuntimeData:
     coordinator: IngeteamCoordinator
     sensors: tuple[IngeteamSensorDescription, ...]
     energy: tuple[IngeteamEnergyDescription, ...]
+    requests: int

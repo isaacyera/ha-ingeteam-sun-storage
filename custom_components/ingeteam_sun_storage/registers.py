@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+import math
 
 FIRST_REGISTER = 30001
 # 30001..30068 exist on every firmware; 30069..30081 were added in later ones.
@@ -27,6 +28,31 @@ MESSAGE_SPACING = 1.0
 
 type Chunk = tuple[int, int]
 """A read request: protocol start address and register count."""
+
+# Home Assistant treats an update interval of 0 as "do not poll", so a pause is
+# always a little above it. The spacing between requests is what keeps the
+# inverter from being asked too often, not this.
+MIN_PAUSE = 0.1
+
+
+def minimum_period(request_count: int) -> float:
+    """Return the fewest seconds between the starts of two refreshes.
+
+    Each request waits ``MESSAGE_SPACING`` after the one before it, the first
+    request of a refresh included, so a refresh of N requests starts no more
+    often than every N spacings.
+    """
+    return request_count * MESSAGE_SPACING
+
+
+def minimum_scan_interval(request_count: int, lowest: int) -> int:
+    """Return the smallest scan interval worth offering, in whole seconds."""
+    return max(lowest, math.ceil(minimum_period(request_count)))
+
+
+def pause_after(period: float, pass_seconds: float) -> float:
+    """Return the pause that starts the next refresh ``period`` after this one."""
+    return max(period - pass_seconds, MIN_PAUSE)
 
 # Registers with documented ranges, used to recognise the inverter.
 MONTH_ADDRESS = 30002 - FIRST_REGISTER

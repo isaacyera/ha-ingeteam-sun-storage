@@ -148,3 +148,28 @@ def test_identity_check():
     assert not r.plausible_identity(0, 3)
     assert not r.plausible_identity(13, 3)
     assert not r.plausible_identity(10, 11)
+
+
+def test_minimum_period_is_one_spacing_per_request():
+    assert r.minimum_period(6) == 6.0
+    assert r.minimum_period(9) == 9.0  # the whole register map
+
+
+def test_pause_keeps_the_period_between_refresh_starts():
+    assert abs(r.pause_after(10, 5.2) - 4.8) < 1e-9
+    # A refresh as long as the period, or longer, leaves only the minimum pause.
+    assert r.pause_after(5, 5.0) == r.MIN_PAUSE
+    assert r.pause_after(5, 7.0) == r.MIN_PAUSE
+
+
+def test_the_pause_is_never_zero():
+    # Home Assistant treats an update interval of 0 as "do not poll".
+    assert r.MIN_PAUSE > 0
+    assert r.pause_after(0, 100) > 0
+
+
+def test_minimum_scan_interval_rounds_up_and_respects_the_lowest():
+    assert r.minimum_scan_interval(6, 5) == 6
+    assert r.minimum_scan_interval(9, 5) == 9
+    # Few requests still never offer less than the lowest allowed value.
+    assert r.minimum_scan_interval(3, 5) == 5

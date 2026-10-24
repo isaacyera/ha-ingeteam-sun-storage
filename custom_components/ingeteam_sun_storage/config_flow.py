@@ -12,7 +12,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
@@ -29,15 +29,43 @@ from .const import (
     CONF_UNIT_ID,
     DEFAULT_NAME,
     DEFAULT_PORT,
+    DEFAULT_SCAN_INTERVAL,
     DEFAULT_UNIT_ID,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    TYPICAL_REFRESH,
 )
-from .helpers import NotIngeteamError, async_probe, create_modbus_params, flag
+from .helpers import (
+    NotIngeteamError,
+    async_probe,
+    create_modbus_params,
+    flag,
+    scan_interval,
+)
+from .registers import minimum_scan_interval
 
-OPTIONS = {
-    probatio.Required(CONF_READ_METER, default=False): BooleanSelector(),
-    probatio.Required(CONF_READ_BATTERY, default=False): BooleanSelector(),
-}
+
+def _options(minimum: int) -> dict[Any, Any]:
+    """Return the option fields, with the lowest scan interval that makes sense."""
+    return {
+        probatio.Required(CONF_READ_METER, default=False): BooleanSelector(),
+        probatio.Required(CONF_READ_BATTERY, default=False): BooleanSelector(),
+        probatio.Required(
+            CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
+        ): probatio.All(
+            NumberSelector(
+                NumberSelectorConfig(
+                    min=minimum,
+                    max=MAX_SCAN_INTERVAL,
+                    step=1,
+                    unit_of_measurement="s",
+                    mode=NumberSelectorMode.BOX,
+                )
+            ),
+            probatio.Coerce(int),
+        ),
+    }
 
 STEP_USER = probatio.Schema(
     {
@@ -57,11 +85,9 @@ STEP_USER = probatio.Schema(
             ),
             probatio.Coerce(int),
         ),
-        **OPTIONS,
+        **_options(MIN_SCAN_INTERVAL),
     }
 )
-
-STEP_OPTIONS = probatio.Schema(OPTIONS)
 
 
 class IngeteamConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -110,6 +136,7 @@ class IngeteamConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(STEP_USER, user_input),
+            description_placeholders={"typical": TYPICAL_REFRESH},
             errors=errors,
         )
 
@@ -128,7 +155,21 @@ class IngeteamOptionsFlow(OptionsFlowWithReload):
             key: flag(self.config_entry, key)
             for key in (CONF_READ_METER, CONF_READ_BATTERY)
         }
+        # The requests of the running setup say how fast a refresh can be. Without
+        # them (the entry is not loaded) only the general range is known.
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        if runtime_data is None:
+            minimum = MIN_SCAN_INTERVAL
+            refresh = TYPICAL_REFRESH
+        else:
+            minimum = minimum_scan_interval(runtime_data.requests, MIN_SCAN_INTERVAL)
+            refresh = str(minimum)
+
+        current[CONF_SCAN_INTERVAL] = max(scan_interval(self.config_entry), minimum)
         return self.async_show_form(
             step_id="init",
-            data_schema=self.add_suggested_values_to_schema(STEP_OPTIONS, current),
+            data_schema=self.add_suggested_values_to_schema(
+                probatio.Schema(_options(minimum)), current
+            ),
+            description_placeholders={"minimum": refresh},
         )

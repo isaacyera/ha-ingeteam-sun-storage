@@ -3,14 +3,15 @@
     "step": {
       "user": {
         "title": "Ingeteam Sun Storage",
-        "description": "Enter the address of the inverter's Modbus TCP interface.",
+        "description": "Enter the address of the inverter's Modbus TCP interface. A refresh of all the values takes about {typical} seconds, depending on what you switch on.",
         "data": {
           "name": "Name prefix",
           "host": "Host",
           "port": "Port",
           "unit_id": "Unit ID",
           "read_meter": "Read meter data (only when installed)",
-          "read_battery": "Read battery data (only when installed)"
+          "read_battery": "Read battery data (only when installed)",
+          "scan_interval": "Scan interval"
         },
         "data_description": {
           "name": "Used as the device name, so it becomes the start of every entity ID.",
@@ -18,7 +19,8 @@
           "port": "Modbus TCP port, 502 unless changed on the inverter.",
           "unit_id": "Modbus unit (slave) ID of the inverter, 1 by default.",
           "read_meter": "Adds the external meter sensors and reads their registers.",
-          "read_battery": "Adds the battery sensors and reads their registers."
+          "read_battery": "Adds the battery sensors and reads their registers.",
+          "scan_interval": "Seconds from the start of one refresh to the start of the next. A refresh cannot be faster than about a second per request, so a shorter value just polls as fast as the inverter allows."
         }
       }
     },
@@ -35,14 +37,16 @@
     "step": {
       "init": {
         "title": "Installed hardware",
-        "description": "Registers are only read from the inverter for the parts that are switched on. The integration reloads when you save.",
+        "description": "Registers are only read from the inverter for the parts that are switched on. With what is switched on now, a refresh takes about {minimum} seconds, which is also the fastest scan interval. The integration reloads when you save.",
         "data": {
           "read_meter": "Read meter data (only when installed)",
-          "read_battery": "Read battery data (only when installed)"
+          "read_battery": "Read battery data (only when installed)",
+          "scan_interval": "Scan interval"
         },
         "data_description": {
           "read_meter": "Adds the external meter sensors and reads their registers.",
-          "read_battery": "Adds the battery sensors and reads their registers."
+          "read_battery": "Adds the battery sensors and reads their registers.",
+          "scan_interval": "Seconds from the start of one refresh to the start of the next. A refresh cannot be faster than about a second per request, so a shorter value just polls as fast as the inverter allows."
         }
       }
     }

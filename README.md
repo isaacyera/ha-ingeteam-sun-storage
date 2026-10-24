@@ -57,18 +57,30 @@ Both are off by default. Registers of a part that is switched off are not read.
 Ingeteam recommends a single Modbus TCP client on port 502, at least one second
 between requests and no more than 10 registers per request. The integration
 follows this: only the registers that an enabled entity needs are read, in as
-few requests of at most 10 registers as possible, with a one-second spacing.
+few requests of at most 10 registers as possible, and every request waits one
+second after the previous one.
 
-| Switched on | Requests per refresh |
-| --- | --- |
-| Defaults | 6 (44 registers) |
-| Meter | 6 (55 registers) |
-| Battery | 7 (58 registers) |
-| Meter and battery | 7 (69 registers) |
+A refresh therefore takes about a second per request:
 
-A refresh takes about as many seconds as there are requests, plus a 5 second
-pause, so values update roughly every 11 to 12 seconds. Disabling an entity you
-do not use can reduce the requests further.
+| Switched on | Requests | Registers | Fastest refresh |
+| --- | --- | --- | --- |
+| Defaults | 6 | 44 | about 6 s |
+| Meter | 6 | 55 | about 6 s |
+| Battery | 7 | 58 | about 7 s |
+| Meter and battery | 7 | 69 | about 7 s |
+| Everything, diagnostics included | 8 | 75 | about 8 s |
+| The whole register map | 9 | 81 | about 9 s |
+
+**Scan interval** (setup and *Configure*, 5 to 300 s, default 10) is the time
+from the start of one refresh to the start of the next. If it is shorter than
+the table says, the inverter is simply polled as fast as the spacing allows, so
+a value of 5 behaves like 6 or 7 on most setups. Disabling entities you do not
+use removes requests and lowers that floor.
+
+The *Configure* dialog shows the floor for what is switched on at that moment
+and uses it as the lowest value you can enter. It reflects the saved settings:
+after you change the meter, the battery or the enabled entities, reopen the
+dialog to see the new number.
 
 **Do not run another client against the inverter at the same time**, including
 other Home Assistant integrations or YAML `modbus:` hubs for the same address.

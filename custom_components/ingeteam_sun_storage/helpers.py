@@ -6,11 +6,16 @@ from typing import Any
 from modbus_connection import IllegalDataAddressError, ModbusTcpParams, ModbusUnit
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT, Platform
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, Platform
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityDescription
 
-from .const import DOMAIN
+from .const import (
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+)
 from .registers import (
     BASE_LAST_ADDRESS,
     FIRMWARE_STEPS,
@@ -33,6 +38,14 @@ def create_modbus_params(data: Mapping[str, Any]) -> ModbusTcpParams:
 def flag(entry: ConfigEntry, key: str) -> bool:
     """Return a switch from the options, falling back to the setup answers."""
     return bool(entry.options.get(key, entry.data.get(key, False)))
+
+
+def scan_interval(entry: ConfigEntry) -> int:
+    """Return the pause between passes, in seconds, within the allowed range."""
+    value = entry.options.get(
+        CONF_SCAN_INTERVAL, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    )
+    return max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, int(value)))
 
 
 def unique_id(entry_id: str, key: str) -> str:

@@ -1,6 +1,5 @@
 """Constants for the Ingeteam Sun Storage integration."""
 
-from datetime import timedelta
 import logging
 
 DOMAIN = "ingeteam_sun_storage"
@@ -20,9 +19,18 @@ GROUP_CORE = "core"
 GROUP_METER = "meter"
 GROUP_BATTERY = "battery"
 
-# Waited out after a pass finishes. Each request is held back by the one-second
-# spacing Ingeteam asks for, so a pass takes about as many seconds as requests.
-SCAN_INTERVAL = timedelta(seconds=5)
+# Seconds from the start of one refresh to the start of the next. A refresh
+# cannot take less than about a second per request, because every request waits
+# the one-second spacing Ingeteam asks for, so a shorter interval is simply
+# followed as closely as the requests allow (see registers.minimum_period).
+# The default keeps the 10 second cadence of the earlier integration.
+DEFAULT_SCAN_INTERVAL = 10
+MIN_SCAN_INTERVAL = 5
+MAX_SCAN_INTERVAL = 300
+
+# Shown where the exact floor is not known yet (first setup). A test checks it
+# against the smallest and largest request counts.
+TYPICAL_REFRESH = "6 to 9"
 
 # Energy is not integrated across a longer silence than this.
 MAX_INTEGRATION_GAP = 600

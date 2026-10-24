@@ -25,6 +25,7 @@ from .const import (
     GROUP_BATTERY,
     GROUP_CORE,
     GROUP_METER,
+    LOGGER,
 )
 from .coordinator import IngeteamConfigEntry, IngeteamCoordinator, IngeteamRuntimeData
 from .helpers import (
@@ -33,8 +34,9 @@ from .helpers import (
     create_modbus_params,
     flag,
     is_enabled,
+    scan_interval,
 )
-from .registers import plan_chunks
+from .registers import minimum_period, plan_chunks
 
 PLATFORMS = [Platform.SENSOR]
 
@@ -90,11 +92,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: IngeteamConfigEntry) -> 
         for span in SENSOR_BY_KEY[description.source].spans
     ]
 
-    coordinator = IngeteamCoordinator(hass, entry, unit, plan_chunks(spans))
+    chunks = plan_chunks(spans)
+    period = scan_interval(entry)
+    floor = minimum_period(len(chunks))
+    if period < floor:
+        LOGGER.info(
+            "Scan interval of %s s is shorter than the %s requests need (about "
+            "%s s); the inverter is polled as fast as its spacing allows",
+            period,
+            len(chunks),
+            floor,
+        )
+
+    coordinator = IngeteamCoordinator(hass, entry, unit, chunks, period)
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = IngeteamRuntimeData(
-        coordinator=coordinator, sensors=sensors, energy=energy
+        coordinator=coordinator, sensors=sensors, energy=energy, requests=len(chunks)
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

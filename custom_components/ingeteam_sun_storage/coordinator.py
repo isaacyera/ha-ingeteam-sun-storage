@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .catalog import IngeteamEnergyDescription, IngeteamSensorDescription
 from .const import DOMAIN, LOGGER, SCAN_INTERVAL
 from .registers import FULL_SIZE, Chunk
 
@@ -16,10 +17,10 @@ type IngeteamConfigEntry = ConfigEntry[IngeteamRuntimeData]
 
 
 class IngeteamCoordinator(DataUpdateCoordinator[list[int]]):
-    """Reads the input register map one small request at a time.
+    """Reads the registers that the enabled entities need, in small requests.
 
-    The unit paces the requests (see ``MESSAGE_SPACING``), so a full pass takes
-    about as many seconds as there are chunks.
+    The unit paces the requests (see ``MESSAGE_SPACING``), so a pass takes about
+    as many seconds as there are requests.
     """
 
     config_entry: IngeteamConfigEntry
@@ -73,4 +74,5 @@ class IngeteamRuntimeData:
     """Runtime data for a config entry."""
 
     coordinator: IngeteamCoordinator
-    chunks: tuple[Chunk, ...]
+    sensors: tuple[IngeteamSensorDescription, ...]
+    energy: tuple[IngeteamEnergyDescription, ...]

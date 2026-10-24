@@ -7,16 +7,18 @@ This module has no Home Assistant imports so it can be tested on its own.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-import re
 
 FIRST_REGISTER = 30001
-# 30001..30068 exist on every firmware; 30069..30081 were added in later ones
-# (_B and up) and are probed at setup.
-BASE_LAST_REGISTER = 30068
-FULL_LAST_REGISTER = 30081
-FULL_SIZE = FULL_LAST_REGISTER - FIRST_REGISTER + 1
+# 30001..30068 exist on every firmware; 30069..30081 were added in later ones.
+BASE_LAST_ADDRESS = 30068 - FIRST_REGISTER
+FULL_SIZE = 30081 - FIRST_REGISTER + 1
+# Last register added by each later firmware step: 30069 (_B), 30073 (_D),
+# 30077 (_E), 30080 (_G) and 30081 (_H), as protocol addresses.
+FIRMWARE_STEPS = (30069 - FIRST_REGISTER, 30073 - FIRST_REGISTER,
+                  30077 - FIRST_REGISTER, 30080 - FIRST_REGISTER,
+                  30081 - FIRST_REGISTER)
 
 # Ingeteam (manual, "Monitoring by Modbus-TCP"): one client on port 502, at
 # least one second between requests, and no more than 10 registers per request.
@@ -26,29 +28,43 @@ MESSAGE_SPACING = 1.0
 type Chunk = tuple[int, int]
 """A read request: protocol start address and register count."""
 
-
-def _split(first_address: int, last_address: int) -> tuple[Chunk, ...]:
-    """Cut an address range into requests of at most the allowed size."""
-    return tuple(
-        (start, min(MAX_REGISTERS_PER_REQUEST, last_address - start + 1))
-        for start in range(first_address, last_address + 1, MAX_REGISTERS_PER_REQUEST)
-    )
-
-
-BASE_CHUNKS = _split(0, BASE_LAST_REGISTER - FIRST_REGISTER)
-OPTIONAL_CHUNKS = _split(
-    BASE_LAST_REGISTER - FIRST_REGISTER + 1, FULL_LAST_REGISTER - FIRST_REGISTER
-)
-
-# Documented ranges that a real inverter must respect.
-STATUS_REGISTER = 30016
-MONTH_REGISTER = 30002
+# Registers with documented ranges, used to recognise the inverter.
+MONTH_ADDRESS = 30002 - FIRST_REGISTER
+STATUS_ADDRESS = 30016 - FIRST_REGISTER
 MAX_STATUS = 10
 
 
-def slug(label: str) -> str:
-    """Turn a label into a translation key."""
-    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+def plan_chunks(spans: Iterable[range]) -> tuple[Chunk, ...]:
+    """Cover the address spans with as few requests as the request limit allows.
+
+    A span is the addresses of one value and is never split across requests.
+    Requests only reach as far as the last address that is needed.
+    """
+    chunks: list[Chunk] = []
+    start = end = -1
+    for span in sorted(spans, key=lambda s: s.start):
+        if start >= 0 and span.stop - 1 - start < MAX_REGISTERS_PER_REQUEST:
+            end = max(end, span.stop - 1)
+            continue
+        if start >= 0:
+            chunks.append((start, end - start + 1))
+        start, end = span.start, span.stop - 1
+    if start >= 0:
+        chunks.append((start, end - start + 1))
+    return tuple(chunks)
+
+
+def covers(chunks: Sequence[Chunk], span: range) -> bool:
+    """Whether the requests include every address of the span."""
+    return all(
+        any(start <= address < start + count for start, count in chunks)
+        for address in span
+    )
+
+
+def plausible_identity(month: int, status: int) -> bool:
+    """Cheap identity check: the clock month and inverter status are in range."""
+    return 1 <= month <= 12 and status <= MAX_STATUS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,29 +75,31 @@ class Register:
     words: int = 1
     signed: bool = False
     scale: float = 1.0
+    # +1 keeps only the positive part of the value, -1 only the negative part
+    # as a positive number. 0 keeps the value as it is.
+    sign: int = 0
 
-    def is_covered(self, chunks: Sequence[Chunk]) -> bool:
-        """Whether the chunks that get read include every word of the value."""
+    @property
+    def span(self) -> range:
+        """Return the protocol addresses of every word."""
         first = self.register - FIRST_REGISTER
-        return all(
-            any(start <= address < start + count for start, count in chunks)
-            for address in range(first, first + self.words)
-        )
+        return range(first, first + self.words)
 
     def raw(self, registers: Sequence[int]) -> int:
-        """Return the unscaled integer. Multi-word values are high word first."""
-        offset = self.register - FIRST_REGISTER
+        """Return the unscaled integer. Multi-word values are low word first."""
         value = 0
-        for word in registers[offset : offset + self.words]:
-            value = (value << 16) | word
+        for index, word in enumerate(registers[self.span.start : self.span.stop]):
+            value |= word << (16 * index)
         bits = 16 * self.words
-        if self.signed and value >= 1 << (bits - 1):
+        if (self.signed or self.sign) and value >= 1 << (bits - 1):
             value -= 1 << bits
         return value
 
     def decode(self, registers: Sequence[int]) -> int | float:
         """Return the scaled value."""
         value = self.raw(registers)
+        if self.sign:
+            value = max(0, self.sign * value)
         if self.scale == 1:
             return value
         return round(value * self.scale, 3)
@@ -92,85 +110,82 @@ def active_bits(value: int, bits: Mapping[int, str]) -> list[str]:
     return [label for bit, label in bits.items() if value >> bit & 1]
 
 
-def looks_like_ingeteam(registers: Sequence[int]) -> bool:
-    """Cheap identity check: the clock month and inverter status are in range."""
-    month = registers[MONTH_REGISTER - FIRST_REGISTER]
-    status = registers[STATUS_REGISTER - FIRST_REGISTER]
-    return 1 <= month <= 12 and status <= MAX_STATUS
+# Entity states. They are the strings the previous integration used, so
+# automations and templates that compare them keep working.
+ON_OFF: dict[int, str] = {0: "Off", 1: "On"}
 
-
-# Labels are the single source for the entity state translations.
 INVERTER_STATUS: dict[int, str] = {
-    0: "Stopped",
+    0: "Inverter Stopped",
     1: "Starting",
     2: "Off-grid",
     3: "On-grid",
-    4: "On-grid (battery standby)",
-    5: "Waiting to connect to grid",
-    6: "Critical loads bypassed to grid",
-    7: "Emergency charge from PV",
-    8: "Emergency charge from grid",
-    9: "Locked, waiting for reset",
-    10: "Error",
+    4: "On-grid (Standby Battery)",
+    5: "Waiting to connect to Grid",
+    6: "Critical Loads Bypassed to Grid",
+    7: "Emergency Charge from PV",
+    8: "Emergency Charge from Grid",
+    9: "Inverter Locked waiting for Reset",
+    10: "Error Mode",
 }
 
 BATTERY_STATUS: dict[int, str] = {
     0: "Standby",
     1: "Discharging",
-    2: "Constant current charging",
-    3: "Constant voltage charging",
+    2: "Constant Current Charging",
+    3: "Constant Voltage Charging",
     4: "Floating",
     5: "Equalizing",
-    6: "BMS communication error",
-    7: "Not configured",
-    8: "Capacity calibration (step 1)",
-    9: "Capacity calibration (step 2)",
-    10: "Standby (manual)",
+    6: "Error Communication with BMS",
+    7: "No Configured",
+    8: "Capacity Calibration (Step 1)",
+    9: "Capacity Calibration (Step 2)",
+    10: "Standby Manual",
 }
 
 POWER_REDUCTION_REASON: dict[int, str] = {
     0: "No limitation",
     1: "Communication",
-    2: "PCB temperature",
-    3: "Heat sink temperature",
-    4: "Pac vs Fac algorithm",
-    5: "Soft start",
-    6: "Charge power configured",
-    7: "PV surplus injected to loads",
-    8: "Pac vs Vac algorithm",
-    9: "Battery power limited",
-    10: "AC grid power limited",
-    11: "Self-consumption mode",
-    12: "High bus voltage protection",
-    13: "LVRT or HVRT process",
-    14: "Nominal AC current",
-    15: "Grid consumption protection",
-    16: "PV surplus injected to grid",
+    2: "PCB Temperature",
+    3: "Heat Sink Temperature",
+    4: "Pac vs Fac Algorithm",
+    5: "Soft Start",
+    6: "Charge Power Configured",
+    7: "PV Surplus injected to the Loads",
+    8: "Pac vs Vac Algorithm",
+    9: "Battery Power Limited",
+    10: "AC Grid Power Limited",
+    11: "Self-Consumption Mode",
+    12: "High Bus Voltage Protection",
+    13: "LVRT or HVRT Process",
+    14: "Nominal AC Current",
+    15: "Grid Consumption Protection",
+    16: "PV Surplus Injected to the Grid",
 }
 
+BATTERY_LIMIT_REASON: dict[int, str] = {
+    0: "No limitation",
+    1: "Heat Sink Temperature",
+    2: "PT100 Temperature",
+    3: "Low Bus Voltage Protection",
+    4: "Battery Settings",
+    5: "BMS Communication",
+    6: "SOC Max Configured",
+    7: "SOC Min Configured",
+    8: "Maximum Battery Power",
+    9: "Modbus command",
+    10: "Digital Input 2",
+    11: "Digital Input 3",
+    12: "PV Charging scheduling",
+    13: "EMS Strategy",
+}
+
+# Shown as an attribute next to the numeric code the previous integration used.
 REACTIVE_SETPOINT_TYPE: dict[int, str] = {
     0: "Cos(φ) configuration",
     1: "Qac communication",
     2: "Cos(φ) communication",
     3: "Qac vs Vac algorithm",
     4: "Cos(φ) vs Pac algorithm",
-}
-
-BATTERY_LIMIT_REASON: dict[int, str] = {
-    0: "No limitation",
-    1: "Heat sink temperature",
-    2: "PT100 temperature",
-    3: "Low bus voltage protection",
-    4: "Battery settings",
-    5: "BMS communication",
-    6: "SOC max configured",
-    7: "SOC min configured",
-    8: "Maximum battery power",
-    9: "Modbus command",
-    10: "Digital input 2",
-    11: "Digital input 3",
-    12: "PV charging scheduling",
-    13: "EMS strategy",
 }
 
 BMS_ALARM_BITS: dict[int, str] = {

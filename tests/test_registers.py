@@ -22,37 +22,14 @@ def _image(values: dict[int, int]) -> list[int]:
     return image
 
 
-def test_chunks_respect_ingeteam_request_limit():
-    chunks = r.BASE_CHUNKS + r.OPTIONAL_CHUNKS
-    assert all(1 <= count <= 10 for _, count in chunks)
-    assert len(chunks) == 9
-
-
-def test_chunks_cover_every_register_exactly_once():
-    addresses = [
-        a for start, count in r.BASE_CHUNKS + r.OPTIONAL_CHUNKS
-        for a in range(start, start + count)
-    ]
-    assert addresses == list(range(r.FULL_SIZE))
-
-
-def test_multiword_values_are_not_split_across_requests():
-    for first in (30007, 30011):  # operation time, alarms
-        reg = r.Register(register=first, words=2)
-        assert any(reg.is_covered([chunk]) for chunk in r.BASE_CHUNKS)
-
-
-def test_optional_registers_are_dropped_with_their_chunk():
-    bms_flags = r.Register(register=30069)
-    ev_power = r.Register(register=30081)
-    assert not bms_flags.is_covered(r.BASE_CHUNKS)
-    assert bms_flags.is_covered(r.BASE_CHUNKS + r.OPTIONAL_CHUNKS)
-    assert not ev_power.is_covered(r.BASE_CHUNKS + r.OPTIONAL_CHUNKS[:1])
+def _reg(register: int, **kwargs):
+    return r.Register(register=register, **kwargs)
 
 
 def test_documented_address_offset():
     # "register number 1 ... in the memory address is position 0"
-    assert r.Register(register=30001).raw([7]) == 7
+    assert _reg(30001).span == range(0, 1)
+    assert _reg(30011, words=2).span == range(10, 12)
 
 
 def test_decode_matches_values_seen_in_home_assistant():
@@ -68,41 +45,97 @@ def test_decode_matches_values_seen_in_home_assistant():
             30058: 419,  # inverter temperature [°C x10]
         }
     )
-    assert r.Register(register=30032).decode(image) == 447
-    assert r.Register(register=30033, scale=0.01).decode(image) == 1.42
-    assert r.Register(register=30034).decode(image) == 634
-    assert r.Register(register=30038, signed=True).decode(image) == 613
-    assert r.Register(register=30040, scale=0.001).decode(image) == 0.995
-    assert r.Register(register=30041, scale=0.1).decode(image) == 54.6
-    assert r.Register(register=30051, scale=0.01).decode(image) == 49.97
-    assert r.Register(register=30058, signed=True, scale=0.1).decode(image) == 41.9
+    assert _reg(30032).decode(image) == 447
+    assert _reg(30033, scale=0.01).decode(image) == 1.42
+    assert _reg(30034).decode(image) == 634
+    assert _reg(30038, signed=True).decode(image) == 613
+    assert _reg(30040, signed=True, scale=0.001).decode(image) == 0.995
+    assert _reg(30041, scale=0.1).decode(image) == 54.6
+    assert _reg(30051, scale=0.01).decode(image) == 49.97
+    assert _reg(30058, signed=True, scale=0.1).decode(image) == 41.9
 
 
 def test_signed_registers_go_negative():
-    image = _image({30039: -61, 30020: -1500, 30019: -250})
-    assert r.Register(register=30039, signed=True).decode(image) == -61
-    assert r.Register(register=30020, signed=True).decode(image) == -1500
-    assert r.Register(register=30019, signed=True, scale=0.01).decode(image) == -2.5
+    image = _image({30039: -61, 30019: -250})
+    assert _reg(30039, signed=True).decode(image) == -61
+    assert _reg(30019, signed=True, scale=0.01).decode(image) == -2.5
     # The same word read as unsigned stays large.
-    assert r.Register(register=30039).decode(image) == 65475
+    assert _reg(30039).decode(image) == 65475
 
 
-def test_32_bit_values_are_high_word_first():
-    image = _image({30007: 0x0001, 30008: 0x0002})
-    assert r.Register(register=30007, words=2).decode(image) == 0x00010002
+def test_32_bit_values_are_low_word_first():
+    # Same order as the previous integration, which was run against the hardware.
+    image = _image({30011: 0x0001, 30012: 0x0002})
+    assert _reg(30011, words=2).decode(image) == 0x00020001
 
 
-def test_enum_labels_are_unique_slugs():
-    for states in (
-        r.INVERTER_STATUS,
-        r.BATTERY_STATUS,
-        r.POWER_REDUCTION_REASON,
-        r.REACTIVE_SETPOINT_TYPE,
-        r.BATTERY_LIMIT_REASON,
-    ):
-        slugs = [r.slug(label) for label in states.values()]
-        assert len(set(slugs)) == len(slugs)
-    assert r.slug(r.INVERTER_STATUS[3]) == "on_grid"
+def test_power_is_split_into_positive_and_negative_parts():
+    discharging = _reg(30020, sign=1)
+    charging = _reg(30020, sign=-1)
+
+    image = _image({30020: 1500})
+    assert discharging.decode(image) == 1500
+    assert charging.decode(image) == 0
+
+    image = _image({30020: -800})
+    assert discharging.decode(image) == 0
+    assert charging.decode(image) == 800
+
+    image = _image({30020: 0})
+    assert discharging.decode(image) == 0
+    assert charging.decode(image) == 0
+
+
+def test_plan_chunks_respects_the_request_limit():
+    spans = [range(a, a + 1) for a in range(r.FULL_SIZE)]
+    chunks = r.plan_chunks(spans)
+    assert all(1 <= count <= 10 for _, count in chunks)
+    assert len(chunks) == 9
+    covered = [a for start, count in chunks for a in range(start, start + count)]
+    assert covered == list(range(r.FULL_SIZE))
+
+
+def test_plan_chunks_only_reads_what_is_needed():
+    assert r.plan_chunks([]) == ()
+    # Battery block 30018..30031 is addresses 17..30.
+    battery = [range(a, a + 1) for a in range(17, 31)]
+    assert r.plan_chunks(battery) == ((17, 10), (27, 4))
+    # Two distant registers do not drag the gap in between along.
+    assert r.plan_chunks([range(15, 16), range(70, 71)]) == ((15, 1), (70, 1))
+    # Close registers share one request.
+    assert r.plan_chunks([range(15, 16), range(17, 18)]) == ((15, 3),)
+
+
+def test_plan_chunks_never_splits_a_32_bit_value():
+    # The second word of 10..11 would fall into the first request's window.
+    assert r.plan_chunks([range(1, 2), range(10, 12)]) == ((1, 1), (10, 2))
+    # When both words fit they share the request.
+    assert r.plan_chunks([range(1, 2), range(9, 11)]) == ((1, 10),)
+
+
+def test_plan_chunks_handles_duplicates_and_overlaps():
+    spans = [range(30, 31), range(30, 31), range(28, 32)]
+    assert r.plan_chunks(spans) == ((28, 4),)
+
+
+def test_covers():
+    chunks = ((0, 10), (17, 4))
+    assert r.covers(chunks, range(0, 2))
+    assert r.covers(chunks, range(17, 21))
+    assert not r.covers(chunks, range(9, 11))
+    assert not r.covers(chunks, range(21, 22))
+
+
+def test_firmware_steps_end_at_documented_registers():
+    # 30069, 30073, 30077, 30080 and 30081 as protocol addresses.
+    assert r.FIRMWARE_STEPS == (68, 72, 76, 79, 80)
+    assert r.BASE_LAST_ADDRESS == 67
+
+
+def test_state_labels_are_the_ones_the_previous_integration_used():
+    assert r.INVERTER_STATUS[3] == "On-grid"
+    assert r.POWER_REDUCTION_REASON[11] == "Self-Consumption Mode"
+    assert r.ON_OFF == {0: "Off", 1: "On"}
 
 
 def test_active_bits():
@@ -111,7 +144,7 @@ def test_active_bits():
 
 
 def test_identity_check():
-    good = _image({30002: 10, 30016: 3})
-    assert r.looks_like_ingeteam(good)
-    assert not r.looks_like_ingeteam(_image({30002: 0, 30016: 3}))
-    assert not r.looks_like_ingeteam(_image({30002: 10, 30016: 11}))
+    assert r.plausible_identity(10, 3)
+    assert not r.plausible_identity(0, 3)
+    assert not r.plausible_identity(13, 3)
+    assert not r.plausible_identity(10, 11)

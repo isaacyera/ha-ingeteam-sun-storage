@@ -5,14 +5,20 @@
         "title": "Ingeteam Sun Storage",
         "description": "Enter the address of the inverter's Modbus TCP interface.",
         "data": {
+          "name": "Name prefix",
           "host": "Host",
           "port": "Port",
-          "unit_id": "Unit ID"
+          "unit_id": "Unit ID",
+          "read_meter": "Read meter data (only when installed)",
+          "read_battery": "Read battery data (only when installed)"
         },
         "data_description": {
+          "name": "Used as the device name, so it becomes the start of every entity ID.",
           "host": "IP address or host name of the inverter.",
           "port": "Modbus TCP port, 502 unless changed on the inverter.",
-          "unit_id": "Modbus unit (slave) ID of the inverter, 1 by default."
+          "unit_id": "Modbus unit (slave) ID of the inverter, 1 by default.",
+          "read_meter": "Adds the external meter sensors and reads their registers.",
+          "read_battery": "Adds the battery sensors and reads their registers."
         }
       }
     },
@@ -25,102 +31,18 @@
       "already_configured": "This inverter is already configured."
     }
   },
-  "entity": {
-    "sensor": {
-      "inverter_status": {
-        "state": {
-          "stopped": "Stopped",
-          "starting": "Starting",
-          "off_grid": "Off-grid",
-          "on_grid": "On-grid",
-          "on_grid_battery_standby": "On-grid (battery standby)",
-          "waiting_to_connect_to_grid": "Waiting to connect to grid",
-          "critical_loads_bypassed_to_grid": "Critical loads bypassed to grid",
-          "emergency_charge_from_pv": "Emergency charge from PV",
-          "emergency_charge_from_grid": "Emergency charge from grid",
-          "locked_waiting_for_reset": "Locked, waiting for reset",
-          "error": "Error"
-        }
-      },
-      "battery_status": {
-        "state": {
-          "standby": "Standby",
-          "discharging": "Discharging",
-          "constant_current_charging": "Constant current charging",
-          "constant_voltage_charging": "Constant voltage charging",
-          "floating": "Floating",
-          "equalizing": "Equalizing",
-          "bms_communication_error": "BMS communication error",
-          "not_configured": "Not configured",
-          "capacity_calibration_step_1": "Capacity calibration (step 1)",
-          "capacity_calibration_step_2": "Capacity calibration (step 2)",
-          "standby_manual": "Standby (manual)"
-        }
-      },
-      "battery_discharge_limit_reason": {
-        "state": {
-          "no_limitation": "No limitation",
-          "heat_sink_temperature": "Heat sink temperature",
-          "pt100_temperature": "PT100 temperature",
-          "low_bus_voltage_protection": "Low bus voltage protection",
-          "battery_settings": "Battery settings",
-          "bms_communication": "BMS communication",
-          "soc_max_configured": "SOC max configured",
-          "soc_min_configured": "SOC min configured",
-          "maximum_battery_power": "Maximum battery power",
-          "modbus_command": "Modbus command",
-          "digital_input_2": "Digital input 2",
-          "digital_input_3": "Digital input 3",
-          "pv_charging_scheduling": "PV charging scheduling",
-          "ems_strategy": "EMS strategy"
-        }
-      },
-      "battery_charge_limit_reason": {
-        "state": {
-          "no_limitation": "No limitation",
-          "heat_sink_temperature": "Heat sink temperature",
-          "pt100_temperature": "PT100 temperature",
-          "low_bus_voltage_protection": "Low bus voltage protection",
-          "battery_settings": "Battery settings",
-          "bms_communication": "BMS communication",
-          "soc_max_configured": "SOC max configured",
-          "soc_min_configured": "SOC min configured",
-          "maximum_battery_power": "Maximum battery power",
-          "modbus_command": "Modbus command",
-          "digital_input_2": "Digital input 2",
-          "digital_input_3": "Digital input 3",
-          "pv_charging_scheduling": "PV charging scheduling",
-          "ems_strategy": "EMS strategy"
-        }
-      },
-      "power_reduction_reason": {
-        "state": {
-          "no_limitation": "No limitation",
-          "communication": "Communication",
-          "pcb_temperature": "PCB temperature",
-          "heat_sink_temperature": "Heat sink temperature",
-          "pac_vs_fac_algorithm": "Pac vs Fac algorithm",
-          "soft_start": "Soft start",
-          "charge_power_configured": "Charge power configured",
-          "pv_surplus_injected_to_loads": "PV surplus injected to loads",
-          "pac_vs_vac_algorithm": "Pac vs Vac algorithm",
-          "battery_power_limited": "Battery power limited",
-          "ac_grid_power_limited": "AC grid power limited",
-          "self_consumption_mode": "Self-consumption mode",
-          "high_bus_voltage_protection": "High bus voltage protection",
-          "lvrt_or_hvrt_process": "LVRT or HVRT process",
-          "nominal_ac_current": "Nominal AC current",
-          "grid_consumption_protection": "Grid consumption protection",
-          "pv_surplus_injected_to_grid": "PV surplus injected to grid"
-        }
-      },
-      "reactive_setpoint_type": {
-        "state": {
-          "cos_configuration": "Cos(φ) configuration",
-          "qac_communication": "Qac communication",
-          "cos_communication": "Cos(φ) communication",
-          "qac_vs_vac_algorithm": "Qac vs Vac algorithm",
-          "cos_vs_pac_algorithm": "Cos(φ) vs Pac algorithm"
+  "options": {
+    "step": {
+      "init": {
+        "title": "Installed hardware",
+        "description": "Registers are only read from the inverter for the parts that are switched on. The integration reloads when you save.",
+        "data": {
+          "read_meter": "Read meter data (only when installed)",
+          "read_battery": "Read battery data (only when installed)"
+        },
+        "data_description": {
+          "read_meter": "Adds the external meter sensors and reads their registers.",
+          "read_battery": "Adds the battery sensors and reads their registers."
         }
       }
     }

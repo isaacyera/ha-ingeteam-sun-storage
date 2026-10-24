@@ -14,12 +14,29 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     HomeAssistantError,
 )
+from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_UNIT_ID, DOMAIN
+from .catalog import SENSOR_BY_KEY, select_energy, select_sensors
+from .const import (
+    CONF_READ_BATTERY,
+    CONF_READ_METER,
+    CONF_UNIT_ID,
+    DOMAIN,
+    GROUP_BATTERY,
+    GROUP_CORE,
+    GROUP_METER,
+)
 from .coordinator import IngeteamConfigEntry, IngeteamCoordinator, IngeteamRuntimeData
-from .helpers import NotIngeteamError, async_probe, create_modbus_params
+from .helpers import (
+    NotIngeteamError,
+    async_probe,
+    create_modbus_params,
+    flag,
+    is_enabled,
+)
+from .registers import plan_chunks
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: IngeteamConfigEntry) -> bool:
@@ -36,7 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: IngeteamConfigEntry) -> 
         ) from err
 
     try:
-        chunks = await async_probe(unit)
+        last_address = await async_probe(unit)
     except ModbusError as err:
         raise ConfigEntryNotReady(
             translation_domain=DOMAIN,
@@ -48,10 +65,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: IngeteamConfigEntry) -> 
             translation_domain=DOMAIN, translation_key="unknown_device"
         ) from err
 
-    coordinator = IngeteamCoordinator(hass, entry, unit, chunks)
+    groups = {GROUP_CORE}
+    if flag(entry, CONF_READ_METER):
+        groups.add(GROUP_METER)
+    if flag(entry, CONF_READ_BATTERY):
+        groups.add(GROUP_BATTERY)
+
+    sensors = select_sensors(groups, last_address)
+    energy = select_energy(groups, sensors)
+
+    # Only registers that an enabled entity needs are read, since every request
+    # costs a second.
+    registry = er.async_get(hass)
+    spans = [
+        span
+        for description in sensors
+        if is_enabled(registry, entry.entry_id, description)
+        for span in description.spans
+    ]
+    spans += [
+        span
+        for description in energy
+        if is_enabled(registry, entry.entry_id, description)
+        for span in SENSOR_BY_KEY[description.source].spans
+    ]
+
+    coordinator = IngeteamCoordinator(hass, entry, unit, plan_chunks(spans))
     await coordinator.async_config_entry_first_refresh()
 
-    entry.runtime_data = IngeteamRuntimeData(coordinator=coordinator, chunks=chunks)
+    entry.runtime_data = IngeteamRuntimeData(
+        coordinator=coordinator, sensors=sensors, energy=energy
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
